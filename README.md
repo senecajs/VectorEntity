@@ -242,9 +242,11 @@ pgvector integration tests skip unless `SENECA_VECTOR_PG_URL` is set; the
 OpenSearch tests skip unless `SENECA_OPENSEARCH_TEST_NODE` is set.
 
 For AWS OpenSearch Serverless, also set `SENECA_OPENSEARCH_TEST_INDEX` to an
-existing k-NN index of the collection (field `vector`, dimension 8), and AWS
-credentials for the default provider chain. A local OpenSearch node with the
-k-NN plugin and security off works too:
+existing k-NN index of the collection (field `vector`, dimension 8), AWS
+credentials for the default provider chain, and `SENECA_OPENSEARCH_TEST_WAIT`
+to the collection's refresh interval in milliseconds (5000 for NextGen, 60000
+for Classic vector collections; the default is 2222). A local OpenSearch node
+with the k-NN plugin and security off works too:
 
 ```sh
 export SENECA_OPENSEARCH_TEST_NODE=http://127.0.0.1:9200

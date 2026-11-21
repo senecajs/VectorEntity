@@ -21,15 +21,19 @@ const describeOpensearch = opensearchAvailable ? describe : describe.skip
 //   SENECA_OPENSEARCH_TEST_NODE=http://127.0.0.1:19200
 //
 // The two differ, and the plugin is written for aoss:
-// * aoss: the vector index of the collection is created beforehand; name it with
-//   SENECA_OPENSEARCH_TEST_INDEX. Documents become searchable some seconds after a write
-//   (there is no refresh call), and a vector search collection assigns the document ids.
+// * aoss: the vector index of the collection is normally created beforehand; name it with
+//   SENECA_OPENSEARCH_TEST_INDEX. There is no refresh call: a write becomes searchable after
+//   the collection's refresh interval, 5 s for NextGen and 60 s for Classic vector
+//   collections, so set SENECA_OPENSEARCH_TEST_WAIT (ms, default 2222) to match.
 // * Local node: without SENECA_OPENSEARCH_TEST_INDEX the suite creates a fresh k-NN index
 //   for this run and deletes it afterwards (an index named by SENECA_OPENSEARCH_TEST_INDEX
 //   that does not exist yet is also created, and kept). The node refreshes every second.
 // The driver always signs requests with SigV4 for the aoss service. A local node ignores the
 // signature, but the signer needs credentials, so for a local node the suite sets dummy AWS
 // credentials when none are in the environment.
+const OPENSEARCH_WAIT = Number(process.env.SENECA_OPENSEARCH_TEST_WAIT) || 2222
+const LIVE_TIMEOUT = 22222 + 2 * OPENSEARCH_WAIT
+
 const OPENSEARCH_LOCAL =
   null != OPENSEARCH_NODE &&
   /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(:|\/|$)/.test(OPENSEARCH_NODE)
@@ -129,7 +133,7 @@ describe('OpensearchDriver (via VectorStore)', () => {
           })
           .save$()
         expect(ent0).toMatchObject({ test: 'insert-remove' })
-        await new Promise((r) => setTimeout(r, 2222))
+        await new Promise((r) => setTimeout(r, OPENSEARCH_WAIT))
       }
       else {
         ent0 = list1[0]
@@ -137,13 +141,13 @@ describe('OpensearchDriver (via VectorStore)', () => {
 
       await seneca.entity('foo/chunk').remove$(ent0.id)
 
-      await new Promise((r) => setTimeout(r, 2222))
+      await new Promise((r) => setTimeout(r, OPENSEARCH_WAIT))
 
       const list2 = await seneca.entity('foo/chunk').list$({ test: 'insert-remove' })
       expect(list2.filter((n: any) => n.id === ent0.id)).toEqual([])
 
       await seneca.close()
-    }, 22222)
+    }, LIVE_TIMEOUT)
 
 
     test('vector-cat', async () => {
@@ -178,7 +182,7 @@ describe('OpensearchDriver (via VectorStore)', () => {
           .save$()
       }
 
-      await new Promise((r) => setTimeout(r, 2222))
+      await new Promise((r) => setTimeout(r, OPENSEARCH_WAIT))
 
       const list2 = await seneca.entity('foo/chunk').list$({
         directive$: { vector$: { k: 2 } },
@@ -194,7 +198,7 @@ describe('OpensearchDriver (via VectorStore)', () => {
       expect(list3.length).toEqual(1)
 
       await seneca.close()
-    }, 22222)
+    }, LIVE_TIMEOUT)
   })
 
 })
@@ -238,8 +242,9 @@ async function makeClient() {
 
 
 // k-NN index for the suite, created only when the index does not exist (see above).
-// The lucene engine runs on current OpenSearch releases, where new nmslib indexes are
-// no longer accepted.
+// The mapping names no engine or method, so that each service applies its own default
+// (aoss Classic collections do not support the lucene engine, and OpenSearch 3 no longer
+// creates nmslib indexes).
 const index_test01 = {
   mappings: {
     properties: {
@@ -247,12 +252,6 @@ const index_test01 = {
       vector: {
         type: 'knn_vector',
         dimension: 8, // 1536,
-        method: {
-          engine: 'lucene',
-          space_type: 'cosinesimil',
-          name: 'hnsw',
-          parameters: { ef_construction: 512, m: 16 },
-        },
       },
     },
   },
