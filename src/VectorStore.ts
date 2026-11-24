@@ -1,12 +1,8 @@
 /* Copyright (c) 2024 Seneca contributors, MIT License */
 
-import { Gubu } from 'gubu'
-
 import { Driver, DriverQueryOpts } from './driver/Driver'
 import { OpensearchDriver } from './driver/OpensearchDriver'
 import { PgvectorDriver } from './driver/PgvectorDriver'
-
-const { Open, Any } = Gubu
 
 
 // Catalogue of known drivers. Each driver chips in one entry here and one entry in the
@@ -75,7 +71,7 @@ function VectorStore(this: any, options: Options) {
   // canonical Seneca store pattern (cf. seneca-postgres-store): Seneca runs the init
   // action during ready(), after the store is registered and before any store message
   // is routed, so the connection is live by the time save/load/list run. We do NOT use
-  // a seneca-promisify `prepare` hook: opening the connection there makes the store's
+  // a `prepare` hook: opening the connection there makes the store's
   // `close` fire spuriously during plugin init (tearing the connection back down).
   const driver: Driver = new DriverClass(buildDriverOpts(options))
 
@@ -353,12 +349,13 @@ function resolveTable(ent: any, options: Options): string {
   return prefix + infix + suffix
 }
 
-// Defaults: Gubu schema. `Any()` / `Open(...)` are Gubu helpers; runtime values are validated against them.
-const defaults: any = {
+// Defaults, built with the validator (shape) that Seneca passes in as `valid`.
+// `valid.Any()` / `valid.Open(...)` are shape builders; runtime values are validated against them.
+const defaults = ({ valid }: { valid: any }) => ({
   debug: false,
   driver: '',
-  map: Any(),
-  canon: Any(),
+  map: valid.Any(),
+  canon: valid.Any(),
   table: {
     prefix: '',
     suffix: '',
@@ -382,16 +379,16 @@ const defaults: any = {
       size: 11,
     },
   },
-  opensearch: Open({
+  opensearch: valid.Open({
     node: 'NODE-URL',
   }),
-  aws: Open({
+  aws: valid.Open({
     region: 'us-east-1',
   }),
-  pg: Open({
+  pg: valid.Open({
     url: '',
   }),
-}
+})
 
 Object.assign(VectorStore, {
   defaults,

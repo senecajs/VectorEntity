@@ -20,8 +20,7 @@ function makeSeneca(url: string, table: string) {
   seneca.options({ system: { exit: () => { /* swallow death watchdog */ } } })
   return seneca
     .test()
-    .use('promisify')
-    .use('entity')
+    .use('@seneca/entity')
     .use(VectorStore, {
       driver: 'pgvector',
       pg: { url },

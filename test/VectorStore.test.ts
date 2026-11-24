@@ -12,7 +12,7 @@ function makeSeneca() {
   // process.exit after death_delay on fatal plugin errors).
   const seneca: any = Seneca({ legacy: false })
   seneca.options({ system: { exit: () => { /* swallowed */ } } })
-  return seneca.test().use('promisify').use('entity')
+  return seneca.test().use('@seneca/entity')
 }
 
 

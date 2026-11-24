@@ -34,7 +34,7 @@ backend with a `driver: '<name>'` option. Vendor-specific concerns (indexes
 Adding support for a new vector database (Qdrant, Pinecone, Weaviate, ...)
 is a new Driver file plus one line in the registry — not a fork.
 
-This plugin builds on the [seneca-entity][seneca-entity-url] plugin, which
+This plugin builds on the [@seneca/entity][seneca-entity-url] plugin, which
 provides the entity API.
 
 If you're using this module, and need help, you can:
@@ -52,7 +52,8 @@ tutorials to sample apps to help get you up and running quickly.
 For code samples, please see the [tests][VectorStore-tests] for this plugin.
 
 ### Seneca compatibility
-Supports Seneca versions **3.x** and above.
+Supports Seneca **4.x** with `@seneca/entity` **29.x**, on Node.js 24 or later.
+Seneca 3 is not supported.
 
 ### Drivers
 
@@ -67,8 +68,7 @@ Driver-specific configuration lives under a key matching the driver name.
 ## Install
 
 ```sh
-npm install seneca
-npm install @seneca/vector-store
+npm install seneca@^4 @seneca/entity @seneca/vector-store
 ```
 
 You'll need the [seneca](http://github.com/senecajs/seneca) toolkit to use this module - it's just a plugin.
@@ -79,8 +79,7 @@ You'll need the [seneca](http://github.com/senecajs/seneca) toolkit to use this 
 const Seneca = require('seneca')
 
 const seneca = Seneca()
-  .use('promisify')
-  .use('entity')
+  .use('@seneca/entity')
   .use('@seneca/vector-store', {
     driver: 'pgvector',
     pg: { url: 'postgres://postgres:postgres@localhost:5432/postgres' },
@@ -240,8 +239,24 @@ npm test
 
 The translation-layer tests (mock driver) run without any backend. The
 pgvector integration tests skip unless `SENECA_VECTOR_PG_URL` is set; the
-OpenSearch tests skip unless `SENECA_OPENSEARCH_TEST_NODE` /
-`SENECA_OPENSEARCH_TEST_INDEX` are set.
+OpenSearch tests skip unless `SENECA_OPENSEARCH_TEST_NODE` is set.
+
+For AWS OpenSearch Serverless, also set `SENECA_OPENSEARCH_TEST_INDEX` to an
+existing k-NN index of the collection (field `vector`, dimension 8), AWS
+credentials for the default provider chain, and `SENECA_OPENSEARCH_TEST_WAIT`
+to the collection's refresh interval in milliseconds (5000 for NextGen, 60000
+for Classic vector collections; the default is 2222). A local OpenSearch node
+with the k-NN plugin and security off works too:
+
+```sh
+export SENECA_OPENSEARCH_TEST_NODE=http://127.0.0.1:9200
+npm test
+```
+
+Without `SENECA_OPENSEARCH_TEST_INDEX`, the tests create a k-NN index for the
+run and delete it afterwards. For a node on `localhost` or `127.0.0.1` they
+set dummy AWS credentials when none are set, because the driver always signs
+its requests for the `aoss` service.
 
 ## License
 Copyright (c) 2024 Richard Rodger and other contributors.

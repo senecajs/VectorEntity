@@ -7,12 +7,48 @@ import Seneca from 'seneca'
 
 import VectorStoreDoc from '../src/VectorStoreDoc'
 import VectorStore from '../src/VectorStore'
+import { OpensearchDriver } from '../src/driver/OpensearchDriver'
 
 
 const OPENSEARCH_NODE = process.env.SENECA_OPENSEARCH_TEST_NODE
 const OPENSEARCH_INDEX = process.env.SENECA_OPENSEARCH_TEST_INDEX
-const opensearchAvailable = Boolean(OPENSEARCH_NODE && OPENSEARCH_INDEX)
+const opensearchAvailable = Boolean(OPENSEARCH_NODE)
 const describeOpensearch = opensearchAvailable ? describe : describe.skip
+
+// The live suite runs against AWS OpenSearch Serverless (aoss) or a local OpenSearch node
+// with the k-NN plugin (security off, plain HTTP), such as the test services container:
+//
+//   SENECA_OPENSEARCH_TEST_NODE=http://127.0.0.1:19200
+//
+// The two differ, and the plugin is written for aoss:
+// * aoss: the vector index of the collection is normally created beforehand; name it with
+//   SENECA_OPENSEARCH_TEST_INDEX. There is no refresh call: a write becomes searchable after
+//   the collection's refresh interval, 5 s for NextGen and 60 s for Classic vector
+//   collections, so set SENECA_OPENSEARCH_TEST_WAIT (ms, default 2222) to match.
+// * Local node: without SENECA_OPENSEARCH_TEST_INDEX the suite creates a fresh k-NN index
+//   for this run and deletes it afterwards (an index named by SENECA_OPENSEARCH_TEST_INDEX
+//   that does not exist yet is also created, and kept). The node refreshes every second.
+// The driver always signs requests with SigV4 for the aoss service. A local node ignores the
+// signature, but the signer needs credentials, so for a local node the suite sets dummy AWS
+// credentials when none are in the environment.
+const OPENSEARCH_WAIT = Number(process.env.SENECA_OPENSEARCH_TEST_WAIT) || 2222
+const LIVE_TIMEOUT = 22222 + 2 * OPENSEARCH_WAIT
+
+const OPENSEARCH_LOCAL =
+  null != OPENSEARCH_NODE &&
+  /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(:|\/|$)/.test(OPENSEARCH_NODE)
+
+if (OPENSEARCH_LOCAL) {
+  process.env.AWS_ACCESS_KEY_ID ??= 'test'
+  process.env.AWS_SECRET_ACCESS_KEY ??= 'test'
+  process.env.AWS_REGION ??= 'us-east-1'
+}
+
+const testIndex: string =
+  OPENSEARCH_INDEX ||
+  'vector-store-test-' + Date.now().toString(36) + '-' + process.pid
+
+let createdIndex = false
 
 
 describe('OpensearchDriver (via VectorStore)', () => {
@@ -48,7 +84,23 @@ describe('OpensearchDriver (via VectorStore)', () => {
   }, 22222)
 
 
-  describeOpensearch('against live AWS OpenSearch', () => {
+  describeOpensearch('against live AWS OpenSearch (or a local node)', () => {
+    beforeAll(async () => {
+      const client = await makeClient()
+      const exists = await client.indices.exists({ index: testIndex })
+      if (!exists.body) {
+        await client.indices.create({ index: testIndex, body: index_test01 })
+        createdIndex = true
+      }
+    }, 22222)
+
+    afterAll(async () => {
+      if (createdIndex && !OPENSEARCH_INDEX) {
+        const client = await makeClient()
+        await client.indices.delete({ index: testIndex })
+      }
+    }, 22222)
+
     test('load-plugin', async () => {
       const seneca = makeSeneca()
       await seneca.ready()
@@ -81,7 +133,7 @@ describe('OpensearchDriver (via VectorStore)', () => {
           })
           .save$()
         expect(ent0).toMatchObject({ test: 'insert-remove' })
-        await new Promise((r) => setTimeout(r, 2222))
+        await new Promise((r) => setTimeout(r, OPENSEARCH_WAIT))
       }
       else {
         ent0 = list1[0]
@@ -89,13 +141,13 @@ describe('OpensearchDriver (via VectorStore)', () => {
 
       await seneca.entity('foo/chunk').remove$(ent0.id)
 
-      await new Promise((r) => setTimeout(r, 2222))
+      await new Promise((r) => setTimeout(r, OPENSEARCH_WAIT))
 
       const list2 = await seneca.entity('foo/chunk').list$({ test: 'insert-remove' })
       expect(list2.filter((n: any) => n.id === ent0.id)).toEqual([])
 
       await seneca.close()
-    }, 22222)
+    }, LIVE_TIMEOUT)
 
 
     test('vector-cat', async () => {
@@ -130,7 +182,7 @@ describe('OpensearchDriver (via VectorStore)', () => {
           .save$()
       }
 
-      await new Promise((r) => setTimeout(r, 2222))
+      await new Promise((r) => setTimeout(r, OPENSEARCH_WAIT))
 
       const list2 = await seneca.entity('foo/chunk').list$({
         directive$: { vector$: { k: 2 } },
@@ -146,7 +198,7 @@ describe('OpensearchDriver (via VectorStore)', () => {
       expect(list3.length).toEqual(1)
 
       await seneca.close()
-    }, 22222)
+    }, LIVE_TIMEOUT)
   })
 
 })
@@ -156,23 +208,21 @@ function makeSenecaBase() {
   // Seneca without the VectorStore plugin — used for tests that only need ent.canon$().
   return Seneca({ legacy: false })
     .test()
-    .use('promisify')
-    .use('entity')
+    .use('@seneca/entity')
 }
 
 
 function makeSeneca() {
   return Seneca({ legacy: false })
     .test()
-    .use('promisify')
-    .use('entity')
+    .use('@seneca/entity')
     .use(VectorStore, {
       driver: 'opensearch',
       map: {
         'foo/chunk': '*'
       },
       index: {
-        exact: OPENSEARCH_INDEX,
+        exact: testIndex,
       },
       opensearch: {
         node: OPENSEARCH_NODE,
@@ -181,27 +231,33 @@ function makeSeneca() {
 }
 
 
+async function makeClient() {
+  const driver = new OpensearchDriver({
+    opensearch: { node: OPENSEARCH_NODE as string },
+    aws: { region: process.env.AWS_REGION || 'us-east-1' },
+  })
+  await driver.connect()
+  return driver.getClient()
+}
+
+
+// k-NN index for the suite, created only when the index does not exist (see above).
+// The mapping names no engine or method, so that each service applies its own default
+// (aoss Classic collections do not support the lucene engine, and OpenSearch 3 no longer
+// creates nmslib indexes).
 const index_test01 = {
-  "mappings": {
-    "properties": {
-      "text": { "type": "text" },
-      "vector": {
-        "type": "knn_vector",
-        "dimension": 8, // 1536,
-        "method": {
-          "engine": "nmslib",
-          "space_type": "cosinesimil",
-          "name": "hnsw",
-          "parameters": { "ef_construction": 512, "m": 16 }
-        }
-      }
-    }
+  mappings: {
+    properties: {
+      text: { type: 'text' },
+      vector: {
+        type: 'knn_vector',
+        dimension: 8, // 1536,
+      },
+    },
   },
-  "settings": {
-    "index": {
-      "number_of_shards": 2,
-      "knn.algo_param": { "ef_search": 512 },
-      "knn": true
-    }
-  }
+  settings: {
+    index: {
+      knn: true,
+    },
+  },
 }
